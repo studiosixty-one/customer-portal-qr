@@ -47,6 +47,7 @@ export async function createCode(input?: { name?: string }) {
 
 export type UpdateCodeInput = {
   name?: string;
+  slug?: string;
   codeType?: QrCodeType;
   contentType?: QrContentType;
   content?: QrContent;
@@ -56,7 +57,7 @@ export type UpdateCodeInput = {
 };
 
 export async function updateCode(codeId: string, input: UpdateCodeInput) {
-  await requireCodeAccess(codeId);
+  const { code } = await requireCodeAccess(codeId);
   const patch: Record<string, unknown> = {};
   if (input.name !== undefined)
     patch.name = input.name.trim() || "Untitled code";
@@ -66,10 +67,29 @@ export async function updateCode(codeId: string, input: UpdateCodeInput) {
   if (input.targetUrl !== undefined) patch.targetUrl = input.targetUrl;
   if (input.design !== undefined) patch.design = input.design;
   if (input.isActive !== undefined) patch.isActive = input.isActive;
-  if (Object.keys(patch).length === 0) return;
-  await db.update(qrCodes).set(patch).where(eq(qrCodes.id, codeId));
-  revalidatePath("/admin");
-  revalidatePath(`/admin/codes/${codeId}`);
+
+  // Custom short-link slug: slugify, then enforce global uniqueness.
+  if (input.slug !== undefined) {
+    if (!input.slug.trim()) throw new Error("The short link can't be empty.");
+    const desired = slugify(input.slug);
+    if (desired !== code.slug) {
+      const existing = await db.query.qrCodes.findFirst({
+        where: eq(qrCodes.slug, desired),
+        columns: { id: true },
+      });
+      if (existing && existing.id !== codeId) {
+        throw new Error("That short link is already taken — try another.");
+      }
+      patch.slug = desired;
+    }
+  }
+
+  if (Object.keys(patch).length > 0) {
+    await db.update(qrCodes).set(patch).where(eq(qrCodes.id, codeId));
+    revalidatePath("/admin");
+    revalidatePath(`/admin/codes/${codeId}`);
+  }
+  return { slug: (patch.slug as string | undefined) ?? code.slug };
 }
 
 export async function deleteCode(codeId: string) {

@@ -60,6 +60,16 @@ export type EditorCode = {
 
 const MAX_LOGO_BYTES = 1_000_000;
 
+// Loose, typing-friendly slug cleanup for the short-link field. The server runs
+// the authoritative slugify() + uniqueness check on save.
+function sanitizeSlug(v: string): string {
+  return v
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .slice(0, 60);
+}
+
 export function QrEditor({
   code,
   stats,
@@ -75,6 +85,7 @@ export function QrEditor({
   const [content, setContent] = useState<QrContent>(code.content ?? {});
   const [targetUrl, setTargetUrl] = useState(code.targetUrl ?? "");
   const [isActive, setIsActive] = useState(code.isActive);
+  const [slug, setSlug] = useState(code.slug);
   const [design, setDesign] = useState<QrDesign>({
     ...DEFAULT_DESIGN,
     ...code.design,
@@ -82,7 +93,7 @@ export function QrEditor({
   const [pending, startTransition] = useTransition();
   const previewRef = useRef<QrPreviewHandle>(null);
 
-  const shortUrl = publicCodeUrl(code.slug);
+  const shortUrl = publicCodeUrl(slug);
 
   const previewData = useMemo(() => {
     if (codeType === "dynamic") return shortUrl;
@@ -99,8 +110,9 @@ export function QrEditor({
   function handleSave() {
     startTransition(async () => {
       try {
-        await updateCode(code.id, {
+        const result = await updateCode(code.id, {
           name,
+          slug,
           codeType,
           contentType,
           content,
@@ -108,6 +120,7 @@ export function QrEditor({
           design,
           isActive,
         });
+        if (result?.slug) setSlug(result.slug);
         toast.success("Saved");
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Couldn't save changes");
@@ -208,9 +221,23 @@ export function QrEditor({
                     </p>
                   </div>
                   <div className="space-y-2">
-                    <Label>Short link</Label>
+                    <Label htmlFor="slug">Short link</Label>
                     <div className="flex gap-2">
-                      <Input readOnly value={shortUrl} className="font-mono text-xs" />
+                      <div className="flex min-w-0 flex-1 items-center rounded-md border font-mono text-xs focus-within:ring-1 focus-within:ring-ring">
+                        <span className="shrink-0 border-r bg-muted/40 px-2 py-2 text-muted-foreground">
+                          /q/
+                        </span>
+                        <input
+                          id="slug"
+                          value={slug}
+                          onChange={(e) => setSlug(sanitizeSlug(e.target.value))}
+                          className="min-w-0 flex-1 bg-transparent px-2 py-2 outline-none"
+                          placeholder="my-link"
+                          spellCheck={false}
+                          autoCapitalize="off"
+                          autoCorrect="off"
+                        />
+                      </div>
                       <Button
                         variant="outline"
                         size="icon"
@@ -220,6 +247,11 @@ export function QrEditor({
                         <Copy className="size-4" />
                       </Button>
                     </div>
+                    <p className="text-xs text-muted-foreground">
+                      Customise the part after <code>/q/</code>. Changing it
+                      breaks codes you&apos;ve already printed; saved with the
+                      code.
+                    </p>
                   </div>
                   <label className="flex items-center justify-between gap-3 rounded-lg border p-3">
                     <span className="text-sm">
